@@ -1,0 +1,20 @@
+# Game directory (copyrighted game files)
+Scam With Your Friends/
+Scam With Your Friends*/
+
+# Build outputs & temporary files
+bin/
+obj/
+dist/
+release/
+*.tmp
+*.bak
+*.orig
+*.log
+
+# IDE & Editor files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
