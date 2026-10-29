@@ -30,6 +30,9 @@ This tool fixes game-breaking engine crashes, bypasses the broken remote auth lo
 5. **False-Positive Piracy Alarm**
    - Disables the annoying in-game siren alarm triggered by rejected auth tokens.
 
+6. **Web Browser Privacy Blocker Bypass**
+   - Bypasses the blocking consent modal in `KolkataOsController` and approval check in `KolkataOsBrowserHost`, allowing the CEF/UWB in-game browser to launch and display directly without freezing or crashing.
+
 ---
 
 ## 🚀 Quick Start (Tutorial)

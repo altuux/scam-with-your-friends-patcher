@@ -60,6 +60,7 @@ internal class Program
             Console.WriteLine("  - Kolkata OS Auth loop bypassed (SignedIn / Unlimited)");
             Console.WriteLine("  - Taskbar / CallerQueue UI crash fixed");
             Console.WriteLine("  - Piracy warning disabled");
+            Console.WriteLine("  - Web browser privacy blocker bypassed (instant open)");
             Console.WriteLine("==========================================================");
             Console.ResetColor();
             Console.WriteLine();
@@ -425,6 +426,56 @@ internal class Program
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("[*] Patched ShouldShowPiracyWarning (disabled alarm)");
         Console.ResetColor();
+
+        // 6. Patch Browser Privacy in KolkataOsController and KolkataOsBrowserHost
+        var osControllerType = asm.MainModule.Types.FirstOrDefault(t => t.FullName == "Kolkata.UI.KolkataOsController");
+        if (osControllerType != null)
+        {
+            var reqPrivacyMethod = osControllerType.Methods.FirstOrDefault(m => m.Name == "RequestBrowserPrivacyWarning");
+            if (reqPrivacyMethod != null)
+            {
+                reqPrivacyMethod.Body.Instructions.Clear();
+                reqPrivacyMethod.Body.Variables.Clear();
+                reqPrivacyMethod.Body.ExceptionHandlers.Clear();
+                var rIl = reqPrivacyMethod.Body.GetILProcessor();
+                rIl.Emit(OpCodes.Ldc_I4_0); // return false -> bypass modal, open directly
+                rIl.Emit(OpCodes.Ret);
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("[*] Patched RequestBrowserPrivacyWarning (browser opens directly without consent modal)");
+                Console.ResetColor();
+            }
+        }
+
+        var browserHostType = asm.MainModule.Types.FirstOrDefault(t => t.FullName == "Kolkata.UI.KolkataOsBrowserHost");
+        if (browserHostType != null)
+        {
+            var approveMethod = browserHostType.Methods.FirstOrDefault(m => m.Name == "ApproveOpening");
+            var privField = browserHostType.Fields.FirstOrDefault(f => f.Name == "privacyApproved");
+            if (approveMethod != null && privField != null)
+            {
+                approveMethod.Body.Instructions.Clear();
+                approveMethod.Body.Variables.Clear();
+                approveMethod.Body.ExceptionHandlers.Clear();
+                var aIl = approveMethod.Body.GetILProcessor();
+                aIl.Emit(OpCodes.Ldarg_0);
+                aIl.Emit(OpCodes.Ldc_I4_1);
+                aIl.Emit(OpCodes.Stfld, privField);
+                aIl.Emit(OpCodes.Ret);
+            }
+
+            var ensureBrowserMethod = browserHostType.Methods.FirstOrDefault(m => m.Name == "EnsureBrowserClient");
+            if (ensureBrowserMethod != null && ensureBrowserMethod.Body.Instructions.Count >= 6)
+            {
+                for (int i = 0; i <= 5; i++)
+                {
+                    ensureBrowserMethod.Body.Instructions[i].OpCode = OpCodes.Nop;
+                    ensureBrowserMethod.Body.Instructions[i].Operand = null;
+                }
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("[*] Patched KolkataOsBrowserHost (bypassed privacy approval check for CEF/UWB)");
+                Console.ResetColor();
+            }
+        }
 
         // Remove any System.Private.CoreLib reference if present
         var badRef = asm.MainModule.AssemblyReferences.FirstOrDefault(r => r.Name == "System.Private.CoreLib");

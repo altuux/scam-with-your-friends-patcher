@@ -24,6 +24,9 @@ KolkataPatcher is a standalone binary patcher for Scam With Your Friends. It fix
 5. Piracy Alarm Suppression
    - Disables the in-game siren alarm triggered by rejected auth states.
 
+6. Web Browser Privacy Blocker Bypass
+   - Bypasses the blocking privacy modal in KolkataOsController and approval check in KolkataOsBrowserHost, allowing the CEF/UWB in-game browser to open directly without freezing or failing.
+
 ## Instructions
 
 ### Windows
