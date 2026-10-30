@@ -19,5 +19,12 @@ release/
 *.user
 *.suo
 
-# Python
-__pycache__tools/swyf_config.json
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Local user configuration & secrets
+*swyf_config*.json
+swyf_config.json
+tools/swyf_config.json
