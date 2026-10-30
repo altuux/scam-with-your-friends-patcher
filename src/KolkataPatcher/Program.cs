@@ -49,6 +49,7 @@ internal class Program
 
             PatchCoreModule(managedDir);
             PatchUnityWebRequestModule(managedDir);
+            PatchScriptsAssDef(managedDir);
             PatchAssemblyCSharp(managedDir);
 
             Console.WriteLine();
@@ -141,7 +142,7 @@ internal class Program
     private static void RestoreBackups(string managedDir)
     {
         Console.WriteLine("Restoring backups...");
-        string[] files = new[] { "UnityEngine.CoreModule.dll", "UnityEngine.UnityWebRequestModule.dll", "Assembly-CSharp.dll" };
+        string[] files = new[] { "UnityEngine.CoreModule.dll", "UnityEngine.UnityWebRequestModule.dll", "ScriptsAssDef.dll", "Assembly-CSharp.dll" };
         foreach (var f in files)
         {
             string target = Path.Combine(managedDir, f);
@@ -263,6 +264,66 @@ internal class Program
         }
 
         Console.WriteLine("[ ] UnityEngine.UnityWebRequestModule.dll already patched");
+    }
+
+    private static void PatchScriptsAssDef(string managedDir)
+    {
+        string path = Path.Combine(managedDir, "ScriptsAssDef.dll");
+        if (!File.Exists(path)) return;
+
+        EnsureBackup(path);
+
+        var resolver = new DefaultAssemblyResolver();
+        resolver.AddSearchDirectory(managedDir);
+        var readerParams = new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Immediate };
+
+        byte[] raw = File.ReadAllBytes(path);
+        using var ms = new MemoryStream(raw);
+        using var asm = AssemblyDefinition.ReadAssembly(ms, readerParams);
+
+        var hostAi = asm.MainModule.Types.FirstOrDefault(t => t.Name == "HostAiSettings");
+        if (hostAi == null) return;
+
+        bool modified = false;
+
+        var openRouterProp = hostAi.Properties.FirstOrDefault(p => p.Name == "OpenRouterSelected");
+        if (openRouterProp?.GetMethod != null)
+        {
+            var m = openRouterProp.GetMethod;
+            m.Body.Instructions.Clear();
+            m.Body.Variables.Clear();
+            m.Body.ExceptionHandlers.Clear();
+            var il = m.Body.GetILProcessor();
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+            modified = true;
+        }
+
+        var directProp = hostAi.Properties.FirstOrDefault(p => p.Name == "UseDirectOpenRouter");
+        if (directProp?.GetMethod != null)
+        {
+            var m = directProp.GetMethod;
+            m.Body.Instructions.Clear();
+            m.Body.Variables.Clear();
+            m.Body.ExceptionHandlers.Clear();
+            var il = m.Body.GetILProcessor();
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+            modified = true;
+        }
+
+        if (modified)
+        {
+            asm.Write(path + ".tmp");
+            File.Move(path + ".tmp", path, true);
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("[*] Patched ScriptsAssDef.dll (forced OpenRouter / Gateway backend)");
+            Console.ResetColor();
+        }
+        else
+        {
+            Console.WriteLine("[ ] ScriptsAssDef.dll already patched");
+        }
     }
 
     private static void PatchAssemblyCSharp(string managedDir)
@@ -417,6 +478,38 @@ internal class Program
         Console.WriteLine("[*] Patched EdgeLimitsAsync (mock limits)");
         Console.ResetColor();
 
+        // 4b. Patch ResolveEdgePromptAsync (mock prompt bundle so game never queries kolkata-ai.jataterworldwide.com)
+        var resolveMethod = apiType.Methods.FirstOrDefault(m => m.Name == "ResolveEdgePromptAsync");
+        if (resolveMethod != null)
+        {
+            resolveMethod.Body.Instructions.Clear();
+            resolveMethod.Body.Variables.Clear();
+            resolveMethod.Body.ExceptionHandlers.Clear();
+            var rIl = resolveMethod.Body.GetILProcessor();
+            rIl.Emit(OpCodes.Ldstr, "{\"prompt_version\":\"v1\",\"system_prompt\":\"\",\"response_format\":{\"type\":\"json_object\"},\"limits\":{\"max_prompt_tokens\":128000,\"max_context_tokens\":128000,\"max_output_tokens\":4096,\"success\":true}}");
+            rIl.Emit(OpCodes.Call, jObjectParse);
+            rIl.Emit(OpCodes.Call, fromResultJObject);
+            rIl.Emit(OpCodes.Ret);
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("[*] Patched ResolveEdgePromptAsync (offline mock prompt version)");
+            Console.ResetColor();
+        }
+
+        // 4c. Patch EdgeBase (force all API routes to local gateway)
+        var edgeBaseMethod = apiType.Methods.FirstOrDefault(m => m.Name == "EdgeBase");
+        if (edgeBaseMethod != null)
+        {
+            edgeBaseMethod.Body.Instructions.Clear();
+            edgeBaseMethod.Body.Variables.Clear();
+            edgeBaseMethod.Body.ExceptionHandlers.Clear();
+            var ebIl = edgeBaseMethod.Body.GetILProcessor();
+            ebIl.Emit(OpCodes.Ldstr, "http://127.0.0.1:8888");
+            ebIl.Emit(OpCodes.Ret);
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("[*] Patched EdgeBase (redirected backend base URL to http://127.0.0.1:8888)");
+            Console.ResetColor();
+        }
+
         // 5. Patch ShouldShowPiracyWarning
         var piracyMethod = apiType.Methods.First(m => m.Name == "ShouldShowPiracyWarning");
         piracyMethod.Body.Instructions.Clear();
@@ -480,7 +573,8 @@ internal class Program
         }
 
         // 7. Patch CompleteOpenRouterAsync: Redirect to Local Proxy & remove in-game model/key checks
-        var completeAsyncType = asm.MainModule.Types.FirstOrDefault(t => t.Name.Contains("<CompleteOpenRouterAsync>"));
+        var completeAsyncType = apiType.NestedTypes.FirstOrDefault(t => t.Name.Contains("CompleteOpenRouterAsync"))
+                             ?? asm.MainModule.Types.FirstOrDefault(t => t.Name.Contains("<CompleteOpenRouterAsync>"));
         if (completeAsyncType != null)
         {
             var moveNextMethod = completeAsyncType.Methods.FirstOrDefault(m => m.Name == "MoveNext");
@@ -490,7 +584,9 @@ internal class Program
                 for (int i = 0; i < instrs.Count; i++)
                 {
                     // Redirect endpoint string to local proxy
-                    if (instrs[i].OpCode == OpCodes.Ldstr && (string)instrs[i].Operand == "https://openrouter.ai/api/v1/chat/completions")
+                    if (instrs[i].OpCode == OpCodes.Ldstr && 
+                        ((string)instrs[i].Operand == "https://openrouter.ai/api/v1/chat/completions" ||
+                         (string)instrs[i].Operand == "https://inference.celeris.ai/celeris-1/v1/chat/completions"))
                     {
                         instrs[i].Operand = "http://127.0.0.1:8888/v1/chat/completions";
                         Console.ForegroundColor = ConsoleColor.Cyan;
@@ -498,15 +594,26 @@ internal class Program
                         Console.ResetColor();
                     }
 
+                    // NOP out the brfalse check on UseDirectOpenRouter so it NEVER branches to CompleteEdgeForCallerAsync
+                    if (instrs[i].OpCode == OpCodes.Call && instrs[i].Operand is MethodReference mr && mr.Name == "get_UseDirectOpenRouter")
+                    {
+                        if (i + 1 < instrs.Count && (instrs[i + 1].OpCode == OpCodes.Brfalse || instrs[i + 1].OpCode == OpCodes.Brfalse_S))
+                        {
+                            instrs[i + 1].OpCode = OpCodes.Nop;
+                            instrs[i + 1].Operand = null;
+                            Console.ForegroundColor = ConsoleColor.Cyan;
+                            Console.WriteLine("[*] Bypassed UseDirectOpenRouter fallback branch in CompleteOpenRouterAsync");
+                            Console.ResetColor();
+                        }
+                    }
+
                     // Bypass "Paste an OpenRouter API key in Host Settings"
                     if (instrs[i].OpCode == OpCodes.Ldstr && (string)instrs[i].Operand == "Paste an OpenRouter API key in Host Settings.")
                     {
-                        // Find the throw right after
-                        for (int k = i; k < i + 15 && k < instrs.Count; k++)
+                        for (int k = i; k < i + 20 && k < instrs.Count; k++)
                         {
                             if (instrs[k].OpCode == OpCodes.Throw)
                             {
-                                // Replace throw with a jump or dummy key fallback
                                 for (int j = i - 2; j <= k; j++)
                                 {
                                     instrs[j].OpCode = OpCodes.Nop;
@@ -523,7 +630,7 @@ internal class Program
                     // Bypass "Choose an OpenRouter model in Host Settings."
                     if (instrs[i].OpCode == OpCodes.Ldstr && (string)instrs[i].Operand == "Choose an OpenRouter model in Host Settings.")
                     {
-                        for (int k = i; k < i + 15 && k < instrs.Count; k++)
+                        for (int k = i; k < i + 20 && k < instrs.Count; k++)
                         {
                             if (instrs[k].OpCode == OpCodes.Throw)
                             {
