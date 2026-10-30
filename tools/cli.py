@@ -4,7 +4,7 @@ import sys
 import time
 import subprocess
 from config import load_config, save_config
-from proxy import run_proxy
+from proxy import run_proxy, PROVIDER_PRIORITY, DEFAULT_MODELS
 from tester import test_provider_key, inspect_game_save
 
 def clear_screen():
@@ -22,21 +22,24 @@ def run_tests():
     print_header()
     print("--- Diagnostics & Connection Tester ---")
     cfg = load_config()
-    p = cfg.get("provider", "groq")
-    m = cfg.get("model", "llama-3.3-70b-versatile")
-    keys = cfg.get("keys", {}).get(p, [])
+    keys_dict = cfg.get("keys", {})
     
-    print(f"Testing Active Provider: {p.upper()} ({m})")
-    print(f"Total keys configured:   {len(keys)}")
-    print()
-    
-    if not keys:
-        print("[!] No keys found to test! Go to [2] in main menu to add keys.")
-    else:
+    total_tested = 0
+    for p in PROVIDER_PRIORITY:
+        keys = keys_dict.get(p, [])
+        m = DEFAULT_MODELS.get(p, "")
+        if not keys:
+            continue
+        print(f"Checking Provider: {p.upper()} (Default Model: {m})")
+        print(f"Configured Keys:   {len(keys)}")
         for idx, k in enumerate(keys):
-            print(f"Testing Key #{idx + 1} ({k[:8]}...):")
-            success = test_provider_key(p, k, m)
+            print(f"  Testing Key #{idx + 1} ({k[:8]}...):")
+            test_provider_key(p, k, m)
+            total_tested += 1
             print("-" * 40)
+            
+    if total_tested == 0:
+        print("[!] No keys found to test! Go to [2] in main menu to add keys.")
             
     print("\nLocal Game Configuration:")
     inspect_game_save()
@@ -46,23 +49,22 @@ def setup_keys_wizard():
     cfg = load_config()
     while True:
         print_header()
-        print("--- AI Provider & Key Management ---")
-        print(f"Current Active Provider: {cfg.get('provider', 'groq').upper()}")
-        print(f"Current Model:           {cfg.get('model', 'llama-3.3-70b-versatile')}")
+        print("--- AI Provider Key Pools (Automatic Cascade & Rotation) ---")
+        print("All providers with added keys are AUTOMATICALLY ACTIVE.")
+        print("Calls cascade by priority: GROQ (Free) -> DEEPSEEK -> OPENROUTER.")
         print()
         
         groq_keys = cfg.get("keys", {}).get("groq", [])
         ds_keys = cfg.get("keys", {}).get("deepseek", [])
         or_keys = cfg.get("keys", {}).get("openrouter", [])
         
-        print(f"1. Groq Keys ({len(groq_keys)} configured) [RECOMMENDED: Free & Fastest]")
-        print(f"2. DeepSeek Keys ({len(ds_keys)} configured)")
-        print(f"3. OpenRouter Keys ({len(or_keys)} configured)")
-        print(f"4. Change Active Provider & Model")
+        print(f"1. Groq Keys       [{len(groq_keys)} in pool]  (100% Free, Fastest)")
+        print(f"2. DeepSeek Keys   [{len(ds_keys)} in pool]  (High Quality)")
+        print(f"3. OpenRouter Keys [{len(or_keys)} in pool]  (Fallback network)")
         print("0. Back to Main Menu")
         print()
         
-        choice = input("Select an option [0-4]: ").strip()
+        choice = input("Select an option [0-3]: ").strip()
         if choice == "0":
             break
         elif choice == "1":
@@ -71,22 +73,6 @@ def setup_keys_wizard():
             manage_provider_keys(cfg, "deepseek", "https://platform.deepseek.com/api_keys")
         elif choice == "3":
             manage_provider_keys(cfg, "openrouter", "https://openrouter.ai/settings/keys")
-        elif choice == "4":
-            print("\nSelect Active Provider:")
-            print("1. Groq (Llama 3.3 70B - Ultra fast, completely free)")
-            print("2. DeepSeek (DeepSeek V3 - High quality)")
-            print("3. OpenRouter (Custom models)")
-            p_choice = input("Choice [1-3]: ").strip()
-            if p_choice == "1":
-                cfg["provider"] = "groq"
-                cfg["model"] = "llama-3.3-70b-versatile"
-            elif p_choice == "2":
-                cfg["provider"] = "deepseek"
-                cfg["model"] = "deepseek-chat"
-            elif p_choice == "3":
-                cfg["provider"] = "openrouter"
-                cfg["model"] = "deepseek/deepseek-v4-flash"
-            save_config(cfg)
 
 def manage_provider_keys(cfg, provider_name: str, get_url: str):
     while True:
@@ -133,17 +119,19 @@ def main_menu():
     while True:
         print_header()
         cfg = load_config()
-        p = cfg.get("provider", "groq")
-        keys_count = len(cfg.get("keys", {}).get(p, []))
+        keys_dict = cfg.get("keys", {})
         
-        print(f"Active Provider: {p.upper()} ({keys_count} keys in pool)")
-        print(f"Active Model:    {cfg.get('model')}")
-        print("Proxy Port:      8888 (http://127.0.0.1:8888)")
+        active_list = [f"{p.upper()} ({len(keys_dict.get(p, []))})" for p in PROVIDER_PRIORITY if keys_dict.get(p)]
+        total_keys = sum(len(keys_dict.get(p, [])) for p in PROVIDER_PRIORITY)
+        
+        print(f"Active Pools:    {' -> '.join(active_list) if active_list else 'NO KEYS (Setup required)'}")
+        print(f"Total Key Pool:  {total_keys} keys active in rotation")
+        print("Local Gateway:   http://127.0.0.1:8888/v1/chat/completions")
         print()
-        print("1. [START] Launch AI Gateway & Live Proxy (Keep running while playing)")
-        print("2. [SETUP] Configure AI Providers & Add API Keys")
-        print("3. [TEST]  Test Active Keys & Check Connection")
-        print("4. [PATCH] Run KolkataPatcher (Patch game executable & assemblies)")
+        print("1. [START] Launch AI Gateway (Keep running in background while playing)")
+        print("2. [SETUP] Manage API Keys & Add Friends' Keys to Pool")
+        print("3. [TEST]  Test All Active Keys & Verify Connections")
+        print("4. [PATCH] Run KolkataPatcher (One-click game & engine patch)")
         print("0. Exit")
         print()
         
@@ -152,8 +140,8 @@ def main_menu():
             print("\nGoodbye!")
             break
         elif opt == "1":
-            if keys_count == 0:
-                print("\n[!] Error: No API keys configured for active provider!")
+            if total_keys == 0:
+                print("\n[!] Error: No API keys configured in any pool!")
                 print("    Please choose option [2] first and add at least one key.")
                 input("Press Enter to continue...")
                 continue

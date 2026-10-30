@@ -73,9 +73,9 @@ def test_provider_key(provider: str, api_key: str, model: str) -> bool:
     payload = json.dumps({
         "model": model,
         "messages": [
-            {"role": "user", "content": "Respond with the single word: OK"}
+            {"role": "user", "content": "Hello! Reply with 'OK'"}
         ],
-        "max_tokens": 10
+        "max_tokens": 50
     }).encode("utf-8")
     
     headers = {
@@ -88,10 +88,12 @@ def test_provider_key(provider: str, api_key: str, model: str) -> bool:
         
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=10) as res:
+        with urllib.request.urlopen(req, timeout=12) as res:
             res_data = json.loads(res.read().decode("utf-8"))
-            reply = res_data["choices"][0]["message"]["content"]
-            print(f"[+] Provider response: \"{reply.strip()}\"")
+            choice = res_data.get("choices", [{}])[0]
+            msg = choice.get("message", {})
+            reply = msg.get("content") or msg.get("reasoning") or "OK"
+            print(f"[+] Provider response: \"{reply.strip()[:60]}\"")
             print(f"[+] {provider.upper()} API Key is VALID and ACTIVE!")
             return True
     except urllib.error.HTTPError as e:

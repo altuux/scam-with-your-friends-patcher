@@ -21,7 +21,10 @@ DEFAULT_MODELS = {
     "openrouter": "deepseek/deepseek-v4-flash"
 }
 
-class KeyRotator:
+# Provider priority hierarchy (Fast & Free first -> High quality -> Fallback)
+PROVIDER_PRIORITY = ["groq", "deepseek", "openrouter"]
+
+class MultiProviderPool:
     def __init__(self):
         self.lock = threading.Lock()
         self.indices = {
@@ -33,7 +36,12 @@ class KeyRotator:
             "total_requests": 0,
             "successful_requests": 0,
             "failed_requests": 0,
-            "last_latency_ms": 0
+            "last_latency_ms": 0,
+            "provider_usage": {
+                "groq": 0,
+                "deepseek": 0,
+                "openrouter": 0
+            }
         }
 
     def get_next_key(self, provider: str, keys: List[str]) -> Optional[str]:
@@ -45,7 +53,7 @@ class KeyRotator:
             self.indices[provider] = (idx + 1) % len(keys)
             return key
 
-rotator = KeyRotator()
+pool = MultiProviderPool()
 
 def forward_request(payload: Dict[str, Any], provider: str, api_key: str, model_override: Optional[str] = None) -> Optional[Dict[str, Any]]:
     endpoint = PROVIDER_ENDPOINTS.get(provider)
@@ -58,11 +66,11 @@ def forward_request(payload: Dict[str, Any], provider: str, api_key: str, model_
     body = dict(payload)
     body["model"] = model
     
-    # Strip game-specific non-standard fields that external APIs might reject
+    # Strip game-specific non-standard fields that external APIs reject
     for extra in ["lobby_session_id", "ai_category", "backend_prompt_length", "prompt_revision", "gameplay_route", "gameplay_player", "gameplay_owner_revision", "prompt_sources", "model_settings", "conversation_protocol", "prompt_version", "prompt_appendix", "conversation_diagnostics"]:
         body.pop(extra, None)
 
-    # Clean up provider requirements for non-OpenRouter providers
+    # Clean up OpenRouter-specific fields when forwarding to Groq / DeepSeek
     if provider != "openrouter":
         body.pop("provider", None)
         body.pop("models", None)
@@ -79,7 +87,7 @@ def forward_request(payload: Dict[str, Any], provider: str, api_key: str, model_
 
     if provider == "openrouter":
         headers["HTTP-Referer"] = "https://github.com/altuux/swyf-patcher"
-        headers["X-Title"] = "Scam With Your Friends Community Patch"
+        headers["X-Title"] = "SWYF Toolkit"
 
     req_data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(endpoint, data=req_data, headers=headers, method="POST")
@@ -88,12 +96,12 @@ def forward_request(payload: Dict[str, Any], provider: str, api_key: str, model_
     try:
         with urllib.request.urlopen(req, timeout=25) as resp:
             elapsed_ms = int((time.time() - start_time) * 1000)
-            rotator.stats["last_latency_ms"] = elapsed_ms
+            pool.stats["last_latency_ms"] = elapsed_ms
             res_json = json.loads(resp.read().decode("utf-8"))
             return res_json
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8", errors="ignore")
-        print(f"[!] {provider.upper()} returned HTTP {e.code}: {err_msg[:200]}")
+        print(f"[!] {provider.upper()} returned HTTP {e.code}: {err_msg[:160]}")
         return None
     except Exception as e:
         print(f"[!] {provider.upper()} request failed: {e}")
@@ -101,7 +109,6 @@ def forward_request(payload: Dict[str, Any], provider: str, api_key: str, model_
 
 class GameProxyHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Suppress default server spam
         pass
 
     def do_POST(self):
@@ -115,44 +122,46 @@ class GameProxyHandler(http.server.BaseHTTPRequestHandler):
             return
 
         config = load_config()
-        primary_provider = config.get("provider", "groq")
-        fallback_provider = config.get("fallback_provider", "openrouter")
+        configured_keys = config.get("keys", {})
         
-        primary_keys = config.get("keys", {}).get(primary_provider, [])
-        fallback_keys = config.get("keys", {}).get(fallback_provider, [])
+        # Build list of active providers that have at least one key, sorted by priority (Groq -> DeepSeek -> OpenRouter)
+        active_providers = [p for p in PROVIDER_PRIORITY if configured_keys.get(p)]
 
-        rotator.stats["total_requests"] += 1
+        pool.stats["total_requests"] += 1
         response = None
-        used_provider = None
+        successful_provider = None
 
-        # 1. Try primary provider with rotating keys
-        for attempt in range(len(primary_keys) or 1):
-            key = rotator.get_next_key(primary_provider, primary_keys)
-            if not key:
-                break
-            print(f"[*] Dispatching call to {primary_provider.upper()} (Key: {key[:8]}...)...")
-            response = forward_request(payload, primary_provider, key, config.get("model"))
-            if response:
-                used_provider = primary_provider
-                break
-            print(f"[!] {primary_provider.upper()} attempt {attempt + 1} failed, trying next key or fallback...")
-
-        # 2. Try fallback provider if primary failed
-        if not response and fallback_keys:
-            print(f"[!] Primary provider failed. Activating FAILOVER to {fallback_provider.upper()}...")
-            for attempt in range(len(fallback_keys) or 1):
-                fb_key = rotator.get_next_key(fallback_provider, fallback_keys)
-                if not fb_key:
+        if not active_providers:
+            print("[!] Warning: No API keys configured in any provider!")
+        
+        # Cascade through available providers by priority
+        for provider in active_providers:
+            keys = configured_keys.get(provider, [])
+            model = DEFAULT_MODELS.get(provider)
+            
+            # Try rotating keys for this provider
+            for attempt in range(len(keys)):
+                key = pool.get_next_key(provider, keys)
+                if not key:
                     break
-                response = forward_request(payload, fallback_provider, fb_key, config.get("fallback_model"))
+                    
+                print(f"[*] Dispatching call to {provider.upper()} (Key: {key[:8]}..., Model: {model})...")
+                response = forward_request(payload, provider, key, model)
                 if response:
-                    used_provider = fallback_provider
+                    successful_provider = provider
                     break
+                print(f"[!] {provider.upper()} key {key[:8]}... failed or rate-limited, trying next...")
+                
+            if response:
+                break
+            else:
+                print(f"[!] All keys for {provider.upper()} failed. Cascading to next provider in priority...")
 
         if response:
-            rotator.stats["successful_requests"] += 1
-            latency = rotator.stats["last_latency_ms"]
-            print(f"[+] Call completed successfully via {used_provider.upper()} in {latency}ms!")
+            pool.stats["successful_requests"] += 1
+            pool.stats["provider_usage"][successful_provider] = pool.stats["provider_usage"].get(successful_provider, 0) + 1
+            latency = pool.stats["last_latency_ms"]
+            print(f"[+] Call completed successfully via {successful_provider.upper()} in {latency}ms!")
             
             res_bytes = json.dumps(response).encode("utf-8")
             self.send_response(200)
@@ -161,7 +170,7 @@ class GameProxyHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(res_bytes)
         else:
-            rotator.stats["failed_requests"] += 1
+            pool.stats["failed_requests"] += 1
             print("[-] All configured providers and keys failed!")
             self.send_response(503)
             self.send_header("Content-Type", "application/json")
@@ -176,7 +185,13 @@ def run_proxy(port: int = 8888):
         daemon_threads = True
 
     httpd = ThreadedHTTPServer(server_address, GameProxyHandler)
-    print(f"[+] SWYF AI Proxy Server listening on http://127.0.0.1:{port}/")
+    cfg = load_config()
+    keys = cfg.get("keys", {})
+    active = [p.upper() for p in PROVIDER_PRIORITY if keys.get(p)]
+    
+    print(f"[+] SWYF AI Multi-Provider Gateway listening on http://127.0.0.1:{port}/")
+    print(f"[*] Priority Hierarchy: {' -> '.join(active) if active else 'NO KEYS CONFIGURED'}")
+    print("[*] Ready for game calls. Press Ctrl+C to return to menu.\n")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
