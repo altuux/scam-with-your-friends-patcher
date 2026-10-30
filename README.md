@@ -71,6 +71,8 @@ The included AI Gateway runs locally on port 8888 and routes game calls to exter
 
 5. **Local AI Gateway Endpoint Redirection**
    - Rewrites the target URL in `KolkataApi.CompleteOpenRouterAsync` from the public OpenRouter API to `http://127.0.0.1:8888/v1/chat/completions`.
+   - Forces `HostAiSettings.OpenRouterSelected` and `UseDirectOpenRouter` in `ScriptsAssDef.dll` to `true`, routing all gameplay through the local gateway regardless of in-game host settings.
+   - Stubs `KolkataApi.ResolveEdgePromptAsync` and `EdgeBase` to prevent unauthenticated 401 calls to remote cloud servers.
    - NOPs client-side exceptions for missing in-game keys or model definitions.
 
 6. **Piracy Alarm Silencing**
