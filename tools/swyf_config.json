@@ -1,0 +1,13 @@
+{
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "port": 8888,
+  "keys": {
+    "groq": [],
+    "deepseek": [],
+    "openrouter": []
+  },
+  "fallback_provider": "openrouter",
+  "fallback_model": "deepseek/deepseek-v4-flash",
+  "auto_retry_count": 3
+}

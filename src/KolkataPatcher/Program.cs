@@ -61,6 +61,8 @@ internal class Program
             Console.WriteLine("  - Taskbar / CallerQueue UI crash fixed");
             Console.WriteLine("  - Piracy warning disabled");
             Console.WriteLine("  - Web browser privacy blocker bypassed (instant open)");
+            Console.WriteLine("  - AI redirect: redirected to local proxy (http://127.0.0.1:8888)");
+            Console.WriteLine("  - Host settings bypass: removed in-game key and model requirements");
             Console.WriteLine("==========================================================");
             Console.ResetColor();
             Console.WriteLine();
@@ -474,6 +476,70 @@ internal class Program
                 Console.ForegroundColor = ConsoleColor.Cyan;
                 Console.WriteLine("[*] Patched KolkataOsBrowserHost (bypassed privacy approval check for CEF/UWB)");
                 Console.ResetColor();
+            }
+        }
+
+        // 7. Patch CompleteOpenRouterAsync: Redirect to Local Proxy & remove in-game model/key checks
+        var completeAsyncType = asm.MainModule.Types.FirstOrDefault(t => t.Name.Contains("<CompleteOpenRouterAsync>"));
+        if (completeAsyncType != null)
+        {
+            var moveNextMethod = completeAsyncType.Methods.FirstOrDefault(m => m.Name == "MoveNext");
+            if (moveNextMethod != null)
+            {
+                var instrs = moveNextMethod.Body.Instructions;
+                for (int i = 0; i < instrs.Count; i++)
+                {
+                    // Redirect endpoint string to local proxy
+                    if (instrs[i].OpCode == OpCodes.Ldstr && (string)instrs[i].Operand == "https://openrouter.ai/api/v1/chat/completions")
+                    {
+                        instrs[i].Operand = "http://127.0.0.1:8888/v1/chat/completions";
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.WriteLine("[*] Patched CompleteOpenRouterAsync endpoint -> http://127.0.0.1:8888/v1/chat/completions");
+                        Console.ResetColor();
+                    }
+
+                    // Bypass "Paste an OpenRouter API key in Host Settings"
+                    if (instrs[i].OpCode == OpCodes.Ldstr && (string)instrs[i].Operand == "Paste an OpenRouter API key in Host Settings.")
+                    {
+                        // Find the throw right after
+                        for (int k = i; k < i + 15 && k < instrs.Count; k++)
+                        {
+                            if (instrs[k].OpCode == OpCodes.Throw)
+                            {
+                                // Replace throw with a jump or dummy key fallback
+                                for (int j = i - 2; j <= k; j++)
+                                {
+                                    instrs[j].OpCode = OpCodes.Nop;
+                                    instrs[j].Operand = null;
+                                }
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine("[*] Removed 'Paste an OpenRouter API key' error throw");
+                                Console.ResetColor();
+                                break;
+                            }
+                        }
+                    }
+
+                    // Bypass "Choose an OpenRouter model in Host Settings."
+                    if (instrs[i].OpCode == OpCodes.Ldstr && (string)instrs[i].Operand == "Choose an OpenRouter model in Host Settings.")
+                    {
+                        for (int k = i; k < i + 15 && k < instrs.Count; k++)
+                        {
+                            if (instrs[k].OpCode == OpCodes.Throw)
+                            {
+                                for (int j = i - 6; j <= k; j++)
+                                {
+                                    instrs[j].OpCode = OpCodes.Nop;
+                                    instrs[j].Operand = null;
+                                }
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine("[*] Removed 'Choose an OpenRouter model' error throw");
+                                Console.ResetColor();
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
 
