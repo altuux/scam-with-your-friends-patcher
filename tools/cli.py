@@ -5,6 +5,7 @@ import time
 import subprocess
 from config import load_config, save_config
 from proxy import run_proxy
+from tester import test_provider_key, inspect_game_save
 
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
@@ -16,6 +17,30 @@ def print_header():
     print("             Open Source Edition - by @altuux             ")
     print("=" * 60)
     print()
+
+def run_tests():
+    print_header()
+    print("--- Diagnostics & Connection Tester ---")
+    cfg = load_config()
+    p = cfg.get("provider", "groq")
+    m = cfg.get("model", "llama-3.3-70b-versatile")
+    keys = cfg.get("keys", {}).get(p, [])
+    
+    print(f"Testing Active Provider: {p.upper()} ({m})")
+    print(f"Total keys configured:   {len(keys)}")
+    print()
+    
+    if not keys:
+        print("[!] No keys found to test! Go to [2] in main menu to add keys.")
+    else:
+        for idx, k in enumerate(keys):
+            print(f"Testing Key #{idx + 1} ({k[:8]}...):")
+            success = test_provider_key(p, k, m)
+            print("-" * 40)
+            
+    print("\nLocal Game Configuration:")
+    inspect_game_save()
+    input("\nPress Enter to return to menu...")
 
 def setup_keys_wizard():
     cfg = load_config()
@@ -117,11 +142,12 @@ def main_menu():
         print()
         print("1. [START] Launch AI Gateway & Live Proxy (Keep running while playing)")
         print("2. [SETUP] Configure AI Providers & Add API Keys")
-        print("3. [PATCH] Run KolkataPatcher (Patch game executable & assemblies)")
+        print("3. [TEST]  Test Active Keys & Check Connection")
+        print("4. [PATCH] Run KolkataPatcher (Patch game executable & assemblies)")
         print("0. Exit")
         print()
         
-        opt = input("Select an option [0-3]: ").strip()
+        opt = input("Select an option [0-4]: ").strip()
         if opt == "0":
             print("\nGoodbye!")
             break
@@ -136,6 +162,8 @@ def main_menu():
         elif opt == "2":
             setup_keys_wizard()
         elif opt == "3":
+            run_tests()
+        elif opt == "4":
             print("\nLaunching KolkataPatcher...")
             patcher_exe = os.path.join(os.path.dirname(__file__), "..", "release", "KolkataPatcher.exe")
             patcher_linux = os.path.join(os.path.dirname(__file__), "..", "release", "KolkataPatcher-linux")
