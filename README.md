@@ -1,117 +1,137 @@
-# Kolkata OS Patcher & Auth Bypass for Scam With Your Friends
+# Kolkata OS Patcher & AI Gateway for Scam With Your Friends
 
-A standalone binary patcher for Scam With Your Friends (Unity 6 Mono).
+A standalone binary patcher and local multi-provider AI Gateway for *Scam With Your Friends* (Unity 6 Mono).
 
-This tool resolves engine crashes, bypasses the remote authentication loop, and restores desktop and taskbar functionality in offline, LAN, and custom environments.
+This project resolves Unity 6 engine crashes, bypasses the remote authentication loop, fixes the missing desktop/taskbar bug, and provides a local AI gateway proxy supporting key rotation and multi-provider failover (Groq, DeepSeek, OpenRouter).
+
+---
+
+## Quick Start Guide
+
+### 1. Patch the Game (All Players)
+Both the host and joining clients must patch their game files once to resolve engine and UI crashes.
+
+#### Windows
+1. Download `KolkataPatcher.exe` from the [Releases](https://github.com/altuux/swyf-patcher/releases) page.
+2. Place `KolkataPatcher.exe` into your game directory (the folder containing `Scam With Your Friends.exe`).
+3. Run `KolkataPatcher.exe`. You will see a success message once patches are applied.
+
+#### Linux / Steam Deck (Proton)
+1. Download `KolkataPatcher-linux` from [Releases](https://github.com/altuux/swyf-patcher/releases).
+2. Run the patcher in terminal:
+   ```bash
+   chmod +x KolkataPatcher-linux
+   ./KolkataPatcher-linux "/path/to/Scam With Your Friends"
+   ```
+3. Set your Steam Launch Options:
+   ```bash
+   WINEDLLOVERRIDES="OnlineFix64,winmm=n,b" %command%
+   ```
+
+---
+
+### 2. AI Setup (Host Only)
+*Scam With Your Friends* requires an LLM backend to drive caller interactions. In peer-to-peer multiplayer, **only the lobby host** handles AI generation calls.
+
+The included AI Gateway runs locally on port 8888 and routes game calls to external providers with automatic key rotation and fallback cascade.
+
+1. Run the interactive CLI:
+   ```bash
+   python tools/cli.py
+   ```
+   *(Or launch `SWYF-Gateway.exe` if using precompiled binary)*
+2. In the menu, choose `[2] Manage API Keys`.
+3. Add at least one API key from your preferred provider:
+   - **Groq** (*Recommended, 100% Free & Fastest*): [console.groq.com/keys](https://console.groq.com/keys)
+   - **DeepSeek**: [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
+   - **OpenRouter**: [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys)
+4. (Optional) Run `[3] Test All Active Keys` to verify connection.
+5. Select `[1] Launch AI Gateway`. Keep this window open in the background while hosting.
+6. Start the game and host your lobby. In-game AI calls are routed through the local gateway automatically.
 
 ---
 
 ## Technical Details
 
-1. `MissingMethodException: PlayerPrefs.SetInt`
-   - Unity 6 managed code stripping removed PlayerPrefs methods (`SetInt`, `SetFloat`, `DeleteKey`, `Save`, `DeleteAll`) from `UnityEngine.CoreModule.dll`.
-   - Injects clean method stubs so `KolkataOsSingleton.Start()` and `KolkataOsController` initialize properly.
+### Engine & UI Patches (Mono.Cecil)
+1. **`PlayerPrefs` Method Injection (`UnityEngine.CoreModule.dll`)**
+   - Unity 6 code stripping stripped `PlayerPrefs` helper methods (`SetInt`, `SetFloat`, `DeleteKey`, `Save`, `DeleteAll`).
+   - Injects clean method stubs so `KolkataOsSingleton.Start()` and `KolkataOsController` initialize properly without throwing `MissingMethodException`.
 
-2. Authentication Loop (`STEAM_REJECTED` / HTTP 401)
-   - In offline or local setups, the game attempts to authenticate continuously against `kolkata-auth.jataterworldwide.com`.
-   - Modifies `EnsureEdgeSessionAsync` and `EdgePostAsync` to mark the session as locally authenticated with the Unlimited membership role.
+2. **Kolkata OS Remote Auth Bypass**
+   - Intercepts `EnsureEdgeSessionAsync` and `EdgePostAsync` in `KolkataApi`.
+   - Marks sessions locally as `SignedIn` with `Unlimited` and `Deluxe` entitlement flags, eliminating the 401 loop against `kolkata-auth.jataterworldwide.com`.
 
-3. Taskbar, Desktop & Caller Queue UI Failure
-   - `KolkataOsCallerQueueApp` raises a `NullReferenceException` when attempting to register the workshop button (`workshop-page`) if absent from the template.
-   - The unhandled exception aborts `BuildDesktop()`. The patch makes this registration null-safe, enabling the complete desktop UI to load.
+3. **Desktop & Taskbar Failure Fix**
+   - `KolkataOsCallerQueueApp` threw an unhandled `NullReferenceException` when registering the workshop UI button (`workshop-page`).
+   - Because desktop loading halted upon exception, players saw an empty desktop without taskbar or applications. The patch makes UI button registration null-safe.
 
-4. `UnityWebRequest.Get(Uri)` Overload
-   - Restores the missing URI overload in `UnityEngine.UnityWebRequestModule.dll`.
+4. **In-Game CEF Browser Bypass**
+   - NOPs the privacy confirmation modal requirement in `KolkataOsController.RequestBrowserPrivacyWarning` and `KolkataOsBrowserHost.EnsureBrowserClient`, enabling the internal browser to load directly.
 
-5. Piracy Alarm Handling
-   - Disables the repeating siren alarm routine triggered by unauthenticated states.
+5. **Local AI Gateway Endpoint Redirection**
+   - Rewrites the target URL in `KolkataApi.CompleteOpenRouterAsync` from the public OpenRouter API to `http://127.0.0.1:8888/v1/chat/completions`.
+   - NOPs client-side exceptions for missing in-game keys or model definitions.
 
-6. In-Game Browser Initialization
-   - Bypasses the modal privacy prompt in `KolkataOsController` and internal approval gate in `KolkataOsBrowserHost`, allowing the CEF/UWB browser instance to initialize directly.
+6. **Piracy Alarm Silencing**
+   - Disables the repeating siren alarm triggered by unauthenticated game states.
 
 ---
 
-## Installation & Usage
+## AI Gateway & Key Rotation Architecture
 
-### Windows
+The gateway acts as an OpenAI-compatible reverse proxy running on `127.0.0.1:8888`:
 
-1. Download `KolkataPatcher.exe` from the Releases page.
-2. Place `KolkataPatcher.exe` in the game directory containing `Scam With Your Friends.exe`.
-3. Run `KolkataPatcher.exe`.
-4. Start the game.
+- **Automatic Cascade & Fallback:**
+  Requests flow sequentially:
+  $$\text{Groq (Llama 3.3 70B)} \longrightarrow \text{DeepSeek (Chat)} \longrightarrow \text{OpenRouter (DeepSeek V4 Flash)}$$
+  If a provider experiences rate limiting, downtime, or key exhaustion, the request immediately falls back to the next provider in the chain.
 
-### Linux / Steam Deck (Proton)
+- **Round-Robin Key Pool:**
+  Add multiple keys per provider. Calls alternate across keys to distribute quota and bypass rate limits.
 
-1. Download `KolkataPatcher-linux` from the Releases page.
-2. In a terminal:
-   ```bash
-   chmod +x KolkataPatcher-linux
-   ./KolkataPatcher-linux "/path/to/Scam With Your Friends"
-   ```
-3. In Steam Launch Options for the game:
-   ```bash
-   WINEDLLOVERRIDES="OnlineFix64,winmm=n,b" %command%
-   ```
+- **Payload Sanitization:**
+  Strips game-specific custom metadata headers (`lobby_session_id`, `gameplay_route`, etc.) that cause external APIs to reject payloads.
 
-### Restoring Original Assemblies
+- **Reasoning Model Compatibility:**
+  Normalizes responses from reasoning models that output replies inside `reasoning` / `reasoning_details` instead of standard `content`.
 
-Backups (`.bak`) are created automatically prior to modifying files. To revert:
+---
+
+## Restoring Original Game Files
+
+Backups (`.bak`) of modified DLLs are created automatically before any changes are written.
+
+To restore untouched original files:
 ```bash
 KolkataPatcher.exe --restore
 ```
-
----
-
-## AI Configuration (OpenRouter)
-
-Because non-official environments cannot route through developer-funded servers, the lobby host provides their own LLM backend via OpenRouter:
-
-1. Obtain an API key from [OpenRouter.ai](https://openrouter.ai/) (free tier includes 1,000 free requests daily).
-2. In the game: navigate to **Host Settings** -> **Host AI**.
-3. Select **OpenRouter Direct** and enter your API key.
-4. Select a supported model (such as `deepseek/deepseek-v4-flash`).
-
-### Diagnostic & Auto-Fix Tool (`tools/check_ai_config.py`)
-
-If the game reports `The AI service is temporarily unavailable` or `Choose an OpenRouter model in Host Settings`, the game's internal `local.json` file is missing the model definition object.
-
-A Python CLI tool is included in the repository to inspect, diagnose, and repair this automatically:
-
-- **Check current state and validate API key limits:**
-  ```bash
-  python3 tools/check_ai_config.py
-  ```
-
-- **Test live completion and verify connection:**
-  ```bash
-  python3 tools/check_ai_config.py --test
-  ```
-
-- **Automatically assign a missing model:**
-  ```bash
-  python3 tools/check_ai_config.py --fix
-  ```
-
-- **Set a specific model ID:**
-  ```bash
-  python3 tools/check_ai_config.py --set-model "deepseek/deepseek-v4-flash"
-  ```
+Or on Linux:
+```bash
+./KolkataPatcher-linux "/path/to/Scam With Your Friends" --restore
+```
 
 ---
 
 ## Compiling from Source
 
-Prerequisites: [.NET 8.0 SDK or .NET 10.0 SDK](https://dotnet.microsoft.com/download)
-
+### KolkataPatcher (.NET 8/10 SDK)
 ```bash
 git clone https://github.com/altuux/swyf-patcher.git
 cd swyf-patcher/src/KolkataPatcher
 
-# Windows x64 binary
+# Windows x64 binary:
 dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o ../../release/
 
-# Linux x64 binary
+# Linux x64 binary:
 dotnet publish -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o ../../release/
+```
+
+### AI Gateway Standalone Binary (Nuitka)
+To build a standalone executable of the AI Gateway on Windows:
+```bash
+python -m pip install nuitka
+python -m nuitka --onefile --standalone --output-filename=SWYF-Gateway.exe tools/cli.py
 ```
 
 ---
