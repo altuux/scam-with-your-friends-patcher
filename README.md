@@ -39,7 +39,7 @@ The included AI Gateway runs locally on port 8888 and routes game calls to exter
    ```bash
    python tools/cli.py
    ```
-   *(Or launch `SWYF-Gateway.exe` if using precompiled binary)*
+   *(Or launch `SWYF-Gateway.exe` on Windows / `./SWYF-Gateway-linux` on Linux from Releases)*
 2. In the menu, choose `[2] Manage API Keys`.
 3. Add at least one API key from your preferred provider:
    - **Groq** (*Recommended, 100% Free & Fastest*): [console.groq.com/keys](https://console.groq.com/keys)
