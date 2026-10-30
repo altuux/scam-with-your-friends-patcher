@@ -64,11 +64,38 @@ KolkataPatcher.exe --restore
 
 ## AI Configuration (OpenRouter)
 
-1. Obtain an API key from [OpenRouter.ai](https://openrouter.ai/).
-2. In the game, navigate to **Host Settings** -> **Host AI**.
-3. Select **OpenRouter** and enter your API key.
+Because non-official environments cannot route through developer-funded servers, the lobby host provides their own LLM backend via OpenRouter:
+
+1. Obtain an API key from [OpenRouter.ai](https://openrouter.ai/) (free tier includes 1,000 free requests daily).
+2. In the game: navigate to **Host Settings** -> **Host AI**.
+3. Select **OpenRouter Direct** and enter your API key.
 4. Select a supported model (such as `deepseek/deepseek-v4-flash`).
-5. A helper script is provided in `tools/check_ai_config.py` to inspect and validate your local configuration and connectivity.
+
+### Diagnostic & Auto-Fix Tool (`tools/check_ai_config.py`)
+
+If the game reports `The AI service is temporarily unavailable` or `Choose an OpenRouter model in Host Settings`, the game's internal `local.json` file is missing the model definition object.
+
+A Python CLI tool is included in the repository to inspect, diagnose, and repair this automatically:
+
+- **Check current state and validate API key limits:**
+  ```bash
+  python3 tools/check_ai_config.py
+  ```
+
+- **Test live completion and verify connection:**
+  ```bash
+  python3 tools/check_ai_config.py --test
+  ```
+
+- **Automatically assign a missing model:**
+  ```bash
+  python3 tools/check_ai_config.py --fix
+  ```
+
+- **Set a specific model ID:**
+  ```bash
+  python3 tools/check_ai_config.py --set-model "deepseek/deepseek-v4-flash"
+  ```
 
 ---
 
