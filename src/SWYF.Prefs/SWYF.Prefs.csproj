@@ -1,10 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>net48</TargetFramework>
     <AssemblyName>SWYF.Prefs</AssemblyName>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
+
+  <PropertyGroup Condition="Exists('../../Scam With Your Friends/Scam With Your Friends_Data/Managed/mscorlib.dll')">
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('../../Scam With Your Friends/Scam With Your Friends_Data/Managed/mscorlib.dll')">
+    <Reference Include="mscorlib">
+      <HintPath>../../Scam With Your Friends/Scam With Your Friends_Data/Managed/mscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
 
 </Project>

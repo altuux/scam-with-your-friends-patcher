@@ -21,22 +21,22 @@ namespace UnityEngine
         {
             try
             {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                if (!string.IsNullOrEmpty(baseDir) && Directory.Exists(baseDir))
-                {
-                    return Path.Combine(baseDir, "swyf_playerprefs.dat");
-                }
-            }
-            catch {}
-
-            try
-            {
                 string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 if (!string.IsNullOrEmpty(appData))
                 {
                     string dir = Path.Combine(appData, "Scam With Your Friends");
                     Directory.CreateDirectory(dir);
                     return Path.Combine(dir, "swyf_playerprefs.dat");
+                }
+            }
+            catch {}
+
+            try
+            {
+                string curDir = Environment.CurrentDirectory;
+                if (!string.IsNullOrEmpty(curDir) && Directory.Exists(curDir))
+                {
+                    return Path.Combine(curDir, "swyf_playerprefs.dat");
                 }
             }
             catch {}
@@ -56,7 +56,8 @@ namespace UnityEngine
                 {
                     try
                     {
-                        string[] lines = File.ReadAllLines(path);
+                        string content = File.ReadAllText(path, Encoding.UTF8);
+                        string[] lines = content.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                         foreach (string line in lines)
                         {
                             if (string.IsNullOrWhiteSpace(line) || line.Length < 3 || line[1] != ':') continue;
@@ -101,9 +102,8 @@ namespace UnityEngine
                         }
                         return;
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        Console.WriteLine("[SWYF-Prefs] Load failed: " + ex.Message);
                     }
                 }
 
@@ -117,14 +117,14 @@ namespace UnityEngine
                         object currentUser = currentUserProp?.GetValue(null, null);
                         if (currentUser != null)
                         {
-                            MethodInfo openSubKey = currentUser.GetType().GetMethod("OpenSubKey", new[] { typeof(string) });
+                            MethodInfo openSubKey = currentUser.GetType().GetMethod("OpenSubKey", new Type[] { typeof(string) });
                             object keyObj = openSubKey?.Invoke(currentUser, new object[] { RegistrySubKey });
                             if (keyObj is IDisposable dispKey)
                             {
                                 using (dispKey)
                                 {
                                     MethodInfo getValueNames = keyObj.GetType().GetMethod("GetValueNames", Type.EmptyTypes);
-                                    MethodInfo getValue = keyObj.GetType().GetMethod("GetValue", new[] { typeof(string) });
+                                    MethodInfo getValue = keyObj.GetType().GetMethod("GetValue", new Type[] { typeof(string) });
                                     string[] names = getValueNames?.Invoke(keyObj, null) as string[];
                                     if (names != null)
                                     {
@@ -184,32 +184,38 @@ namespace UnityEngine
             try
             {
                 string path = GetFilePath();
-                var lines = new List<string>(s_ints.Count + s_floats.Count + s_strings.Count);
-
-                foreach (var kvp in s_ints)
+                string tmpPath = path + ".tmp";
+                using (var fs = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (var sw = new StreamWriter(fs, new UTF8Encoding(false)))
                 {
-                    string k = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Key));
-                    lines.Add("i:" + k + "=" + kvp.Value.ToString(CultureInfo.InvariantCulture));
+                    foreach (var kvp in s_ints)
+                    {
+                        string k = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Key));
+                        sw.WriteLine("i:" + k + "=" + kvp.Value.ToString(CultureInfo.InvariantCulture));
+                    }
+
+                    foreach (var kvp in s_floats)
+                    {
+                        string k = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Key));
+                        sw.WriteLine("f:" + k + "=" + kvp.Value.ToString(CultureInfo.InvariantCulture));
+                    }
+
+                    foreach (var kvp in s_strings)
+                    {
+                        string k = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Key));
+                        string v = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Value ?? string.Empty));
+                        sw.WriteLine("s:" + k + "=" + v);
+                    }
                 }
 
-                foreach (var kvp in s_floats)
+                if (File.Exists(path))
                 {
-                    string k = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Key));
-                    lines.Add("f:" + k + "=" + kvp.Value.ToString(CultureInfo.InvariantCulture));
+                    File.Delete(path);
                 }
-
-                foreach (var kvp in s_strings)
-                {
-                    string k = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Key));
-                    string v = Convert.ToBase64String(Encoding.UTF8.GetBytes(kvp.Value ?? string.Empty));
-                    lines.Add("s:" + k + "=" + v);
-                }
-
-                File.WriteAllLines(path, lines);
+                File.Move(tmpPath, path);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine("[SWYF-Prefs] Save failed: " + ex.Message);
             }
         }
 
