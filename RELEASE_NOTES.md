@@ -1,54 +1,28 @@
-# Release v1.0.0
+# Release v2.0.2
 
-## Description
+## What's Changed in v2.0.2 (Hotfix)
 
-KolkataPatcher is a standalone binary patcher for Scam With Your Friends. It fixes multiple engine-level issues present in the Unity 6 Mono build that prevent the game and Kolkata OS from running properly in offline or non-Steam environments.
+### Fixes & Engine Improvements
 
-## Fixes
+- **Workstation Webcam & Camera App Restored (`DelayedEnableImmediateDisable`)**:
+  - Fixed a `TypeLoadException` and Unity scene deserialization failure (`Read 32 bytes but expected 60 bytes`) caused by `DelayedEnableImmediateDisable` in `Assembly-CSharp.dll` missing the `IImmediateCameraTargetDisabler.get_TargetCamera` interface property required by `ScriptsAssDef.dll`.
+  - Restores the `Webcam Camera` transition when sitting at a workstation so the Kolkata OS **Camera** and **Zoomy** apps display the live selfie feed instead of being stuck staring at the 3D monitor's idle logo wallpaper.
+- **Documentation Cleanup**:
+  - Removed emojis across project documentation and release notes.
 
-1. PlayerPrefs MissingMethodException
-   - Unity 6 managed stripping removed PlayerPrefs.SetInt, SetFloat, DeleteKey, Save, and DeleteAll from UnityEngine.CoreModule.dll.
-   - Restores clean method stubs to prevent runtime crashes during Kolkata OS startup.
+---
 
-2. UnityWebRequest Missing Method
-   - Restores missing UnityWebRequest.Get(Uri) overload in UnityEngine.UnityWebRequestModule.dll.
+## Previous Changes in v2.0.1
 
-3. Kolkata OS Authentication Bypass
-   - Bypasses remote HTTP checks to kolkata-auth.jataterworldwide.com in EnsureEdgeSessionAsync and EdgePostAsync.
-   - Sets the local session state to SignedIn with the Unlimited role and Deluxe entitlements.
+- **Persistent `PlayerPrefs` Engine Restoration (`SWYF.Prefs.dll`)**:
+  - **Scamazon Purchases Fixed**: Permanent apps and items bought in Scamazon properly unlock and persist on the Kolkata OS desktop across game sessions.
+  - **Notification Toast Spam Resolved**: Fixed the recurring bottom-right notification toast ("You now have enough money for {0} in Scamazon") spamming every 4 seconds.
+  - **Crash-Proof Storage**: Player preferences are persisted to `swyf_playerprefs.dat` (targeting Unity's stripped `.NET 4.x` `mscorlib.dll` `4.0.0.0`) with automatic Windows Registry migration, compatible with Windows, Steam Deck, Wine, and Proton.
 
-4. Taskbar, Desktop and Caller Queue UI Crash
-   - Fixes a NullReferenceException in KolkataOsCallerQueueApp.BuildContent caused by attempting to bind a non-existent workshop-page button.
-   - Allows BuildDesktop() to complete fully, restoring desktop icons, the taskbar, and the system tray.
+---
 
-5. Piracy Alarm Suppression
-   - Disables the in-game siren alarm triggered by rejected auth states.
+## Assets
 
-6. Web Browser Privacy Blocker Bypass
-   - Bypasses the blocking privacy modal in KolkataOsController and approval check in KolkataOsBrowserHost, allowing the CEF/UWB in-game browser to open directly without freezing or failing.
-
-## Instructions
-
-### Windows
-1. Download KolkataPatcher.exe from this release.
-2. Place KolkataPatcher.exe into the game root directory (where Scam With Your Friends.exe is located).
-3. Run KolkataPatcher.exe.
-4. Launch the game normally.
-
-### Linux / Steam Deck
-1. Download KolkataPatcher-linux.
-2. Run:
-   ```bash
-   chmod +x KolkataPatcher-linux
-   ./KolkataPatcher-linux "/path/to/Scam With Your Friends"
-   ```
-3. In Steam launch options:
-   ```bash
-   WINEDLLOVERRIDES="OnlineFix64,winmm=n,b" %command%
-   ```
-
-### Restoring Original Files
-Backups (.bak) are automatically created before modifying files. To restore the originals:
-```bash
-KolkataPatcher.exe --restore
-```
+- `SWYF-Complete-Package-v2.0.2.zip`: All-in-one package for Windows (`KolkataPatcher.exe` + `SWYF-Gateway.exe` + `README.md`).
+- `SWYF-Complete-Package-Linux-v2.0.2.tar.gz` / `.zip`: All-in-one package for Linux / Steam Deck (`KolkataPatcher-linux` + `SWYF-Gateway-linux` + `README.md`).
+- Standalone binaries: `KolkataPatcher.exe`, `KolkataPatcher-linux`, `SWYF-Gateway.exe`, `SWYF-Gateway-linux`.

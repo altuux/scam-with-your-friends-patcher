@@ -55,27 +55,30 @@ The included AI Gateway runs locally on port 8888 and routes game calls to exter
 
 ### Engine & UI Patches (Mono.Cecil)
 1. **Full `PlayerPrefs` Engine & Persistence Restoration (`UnityEngine.CoreModule.dll` + `SWYF.Prefs.dll`)**
-   - Unity 6 code stripping stripped essential `PlayerPrefs` methods (`SetInt`, `SetFloat`, `DeleteKey`, `Save`, `DeleteAll`), causing `MissingMethodException`, app purchases in Scamazon to not unlock or show up on desktop, endless notification toast spam in the bottom right corner ("You now have enough money for..."), and camera app failures.
-   - Patcher restores a complete, thread-safe, file-backed preference storage engine (`swyf_playerprefs.dat` with registry migration), guaranteeing persistent saves for permanent apps, desktop layouts, watermark settings, and camera feeds across sessions.
+   - Unity 6 code stripping stripped essential `PlayerPrefs` methods (`SetInt`, `SetFloat`, `DeleteKey`, `Save`, `DeleteAll`), causing `MissingMethodException`, app purchases in Scamazon to not unlock or show up on desktop, and endless notification toast spam in the bottom right corner ("You now have enough money for...").
+   - Patcher restores a complete, thread-safe, file-backed preference storage engine (`swyf_playerprefs.dat` with registry migration), guaranteeing persistent saves for permanent apps, desktop layouts, and watermark settings across sessions.
 
-2. **Kolkata OS Remote Auth Bypass**
+2. **Workstation Webcam & Camera App Fix (`DelayedEnableImmediateDisable`)**
+   - Resolves an assembly interface mismatch between `Assembly-CSharp.dll` and `ScriptsAssDef.dll` (`IImmediateCameraTargetDisabler.get_TargetCamera`) that caused `DelayedEnableImmediateDisable` to fail class loading and scene deserialization (`Read 32 bytes but expected 60 bytes`), leaving the workstation Camera app stuck staring at the 3D monitor logo instead of switching to the webcam selfie camera.
+
+3. **Kolkata OS Remote Auth Bypass**
    - Intercepts `EnsureEdgeSessionAsync` and `EdgePostAsync` in `KolkataApi`.
    - Marks sessions locally as `SignedIn` with `Unlimited` and `Deluxe` entitlement flags, eliminating the 401 loop against `kolkata-auth.jataterworldwide.com`.
 
-3. **Desktop & Taskbar Failure Fix**
+4. **Desktop & Taskbar Failure Fix**
    - `KolkataOsCallerQueueApp` threw an unhandled `NullReferenceException` when registering the workshop UI button (`workshop-page`).
    - Because desktop loading halted upon exception, players saw an empty desktop without taskbar or applications. The patch makes UI button registration null-safe.
 
-4. **In-Game CEF Browser Bypass**
+5. **In-Game CEF Browser Bypass**
    - NOPs the privacy confirmation modal requirement in `KolkataOsController.RequestBrowserPrivacyWarning` and `KolkataOsBrowserHost.EnsureBrowserClient`, enabling the internal browser to load directly.
 
-5. **Local AI Gateway Endpoint Redirection**
+6. **Local AI Gateway Endpoint Redirection**
    - Rewrites the target URL in `KolkataApi.CompleteOpenRouterAsync` from the public OpenRouter API to `http://127.0.0.1:8888/v1/chat/completions`.
    - Forces `HostAiSettings.OpenRouterSelected` and `UseDirectOpenRouter` in `ScriptsAssDef.dll` to `true`, routing all gameplay through the local gateway regardless of in-game host settings.
    - Stubs `KolkataApi.ResolveEdgePromptAsync` and `EdgeBase` to prevent unauthenticated 401 calls to remote cloud servers.
    - NOPs client-side exceptions for missing in-game keys or model definitions.
 
-6. **Piracy Alarm Silencing**
+7. **Piracy Alarm Silencing**
    - Disables the repeating siren alarm triggered by unauthenticated game states.
 
 ---

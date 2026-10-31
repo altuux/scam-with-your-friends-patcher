@@ -56,7 +56,8 @@ internal class Program
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("==========================================================");
             Console.WriteLine("  [SUCCESS] All patches successfully applied!");
-            Console.WriteLine("  - Functional PlayerPrefs engine restored (fixes Scamazon purchases, notification spam & camera)");
+            Console.WriteLine("  - Functional PlayerPrefs engine restored (fixes Scamazon purchases & notification spam)");
+            Console.WriteLine("  - Workstation Webcam Camera restored (fixes DelayedEnableImmediateDisable missing interface)");
             Console.WriteLine("  - UnityWebRequest.Get(Uri) restored");
             Console.WriteLine("  - Kolkata OS Auth loop bypassed (SignedIn / Unlimited)");
             Console.WriteLine("  - Taskbar / CallerQueue UI crash fixed");
@@ -725,6 +726,65 @@ internal class Program
                         }
                     }
                 }
+            }
+        }
+
+        // 8. Fix DelayedEnableImmediateDisable missing IImmediateCameraTargetDisabler.get_TargetCamera
+        //    (fixes TypeLoadException during scene deserialization that left workstation Camera app stuck on the 3D monitor logo)
+        var delayedType = asm.MainModule.Types.FirstOrDefault(t => t.FullName == "DelayedEnableImmediateDisable");
+        if (delayedType != null && !delayedType.Methods.Any(m => m.Name == "get_TargetCamera"))
+        {
+            var targetObjField = delayedType.Fields.FirstOrDefault(f => f.Name == "targetObject");
+            var cinemachineAsm = resolver.Resolve(new AssemblyNameReference("Unity.Cinemachine", null));
+            var cinemachineCamDef = cinemachineAsm?.MainModule.Types.FirstOrDefault(t => t.FullName == "Unity.Cinemachine.CinemachineCamera");
+            var coreAsm = resolver.Resolve(new AssemblyNameReference("UnityEngine.CoreModule", null));
+            var ueObjectDef = coreAsm?.MainModule.Types.FirstOrDefault(t => t.FullName == "UnityEngine.Object");
+            var gameObjDef = coreAsm?.MainModule.Types.FirstOrDefault(t => t.FullName == "UnityEngine.GameObject");
+
+            if (targetObjField != null && cinemachineCamDef != null && ueObjectDef != null && gameObjDef != null)
+            {
+                var cinemachineCamRef = asm.MainModule.ImportReference(cinemachineCamDef);
+                var opEqualityMethod = asm.MainModule.ImportReference(
+                    ueObjectDef.Methods.First(m => m.Name == "op_Equality" && m.Parameters.Count == 2));
+                var getCompGenericDef = gameObjDef.Methods.First(
+                    m => m.Name == "GetComponent" && m.HasGenericParameters && m.GenericParameters.Count == 1 && m.Parameters.Count == 0);
+                var getCompGenericRef = asm.MainModule.ImportReference(getCompGenericDef);
+                var getCompCamRef = new GenericInstanceMethod(getCompGenericRef);
+                getCompCamRef.GenericArguments.Add(cinemachineCamRef);
+
+                var attrs = MethodAttributes.Public | MethodAttributes.Final | MethodAttributes.HideBySig |
+                            MethodAttributes.SpecialName | MethodAttributes.NewSlot | MethodAttributes.Virtual;
+                var getTargetCam = new MethodDefinition("get_TargetCamera", attrs, cinemachineCamRef);
+                var tcIl = getTargetCam.Body.GetILProcessor();
+
+                var loadCompTarget = tcIl.Create(OpCodes.Ldarg_0);
+                tcIl.Emit(OpCodes.Ldarg_0);
+                tcIl.Emit(OpCodes.Ldfld, targetObjField);
+                tcIl.Emit(OpCodes.Ldnull);
+                tcIl.Emit(OpCodes.Call, opEqualityMethod);
+                tcIl.Emit(OpCodes.Brfalse_S, loadCompTarget);
+                tcIl.Emit(OpCodes.Ldnull);
+                tcIl.Emit(OpCodes.Ret);
+
+                tcIl.Append(loadCompTarget);
+                tcIl.Emit(OpCodes.Ldfld, targetObjField);
+                tcIl.Emit(OpCodes.Callvirt, getCompCamRef);
+                tcIl.Emit(OpCodes.Ret);
+
+                delayedType.Methods.Add(getTargetCam);
+
+                if (!delayedType.Properties.Any(p => p.Name == "TargetCamera"))
+                {
+                    var prop = new PropertyDefinition("TargetCamera", PropertyAttributes.None, cinemachineCamRef)
+                    {
+                        GetMethod = getTargetCam
+                    };
+                    delayedType.Properties.Add(prop);
+                }
+
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("[*] Fixed DelayedEnableImmediateDisable.TargetCamera (restored workstation webcam feed)");
+                Console.ResetColor();
             }
         }
 
