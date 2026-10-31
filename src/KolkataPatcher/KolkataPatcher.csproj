@@ -16,4 +16,8 @@
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources/SWYF.Prefs.dll" />
+  </ItemGroup>
+
 </Project>

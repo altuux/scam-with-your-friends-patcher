@@ -54,9 +54,9 @@ The included AI Gateway runs locally on port 8888 and routes game calls to exter
 ## Technical Details
 
 ### Engine & UI Patches (Mono.Cecil)
-1. **`PlayerPrefs` Method Injection (`UnityEngine.CoreModule.dll`)**
-   - Unity 6 code stripping stripped `PlayerPrefs` helper methods (`SetInt`, `SetFloat`, `DeleteKey`, `Save`, `DeleteAll`).
-   - Injects clean method stubs so `KolkataOsSingleton.Start()` and `KolkataOsController` initialize properly without throwing `MissingMethodException`.
+1. **Full `PlayerPrefs` Engine & Persistence Restoration (`UnityEngine.CoreModule.dll` + `SWYF.Prefs.dll`)**
+   - Unity 6 code stripping stripped essential `PlayerPrefs` methods (`SetInt`, `SetFloat`, `DeleteKey`, `Save`, `DeleteAll`), causing `MissingMethodException`, app purchases in Scamazon to not unlock or show up on desktop, endless notification toast spam in the bottom right corner ("You now have enough money for..."), and camera app failures.
+   - Patcher restores a complete, thread-safe, file-backed preference storage engine (`swyf_playerprefs.dat` with registry migration), guaranteeing persistent saves for permanent apps, desktop layouts, watermark settings, and camera feeds across sessions.
 
 2. **Kolkata OS Remote Auth Bypass**
    - Intercepts `EnsureEdgeSessionAsync` and `EdgePostAsync` in `KolkataApi`.

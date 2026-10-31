@@ -56,7 +56,7 @@ internal class Program
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("==========================================================");
             Console.WriteLine("  [SUCCESS] All patches successfully applied!");
-            Console.WriteLine("  - Stripped PlayerPrefs methods restored");
+            Console.WriteLine("  - Functional PlayerPrefs engine restored (fixes Scamazon purchases, notification spam & camera)");
             Console.WriteLine("  - UnityWebRequest.Get(Uri) restored");
             Console.WriteLine("  - Kolkata OS Auth loop bypassed (SignedIn / Unlimited)");
             Console.WriteLine("  - Taskbar / CallerQueue UI crash fixed");
@@ -84,9 +84,10 @@ internal class Program
 
     private static string ResolveManagedDirectory(string[] args)
     {
-        if (args.Length > 0 && !args[0].StartsWith("--") && Directory.Exists(args[0]))
+        var dirArg = args.FirstOrDefault(a => !a.StartsWith("--"));
+        if (!string.IsNullOrEmpty(dirArg) && Directory.Exists(dirArg))
         {
-            string p = args[0];
+            string p = dirArg;
             if (Path.GetFileName(p).Equals("Managed", StringComparison.OrdinalIgnoreCase)) return p;
             string subManaged = Path.Combine(p, "Scam With Your Friends_Data", "Managed");
             if (Directory.Exists(subManaged)) return subManaged;
@@ -161,6 +162,20 @@ internal class Program
                 Console.ResetColor();
             }
         }
+
+        string swyfPrefs = Path.Combine(managedDir, "SWYF.Prefs.dll");
+        if (File.Exists(swyfPrefs))
+        {
+            try
+            {
+                File.Delete(swyfPrefs);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("[+] Removed SWYF.Prefs.dll");
+                Console.ResetColor();
+            }
+            catch {}
+        }
+
         Console.WriteLine("[+] Restore completed.");
     }
 
@@ -170,6 +185,28 @@ internal class Program
         if (!File.Exists(path)) return;
 
         EnsureBackup(path);
+
+        // Extract SWYF.Prefs.dll to managed directory
+        string swyfPrefsPath = Path.Combine(managedDir, "SWYF.Prefs.dll");
+        using (var stream = typeof(Program).Assembly.GetManifestResourceStream("KolkataPatcher.Resources.SWYF.Prefs.dll"))
+        {
+            if (stream != null)
+            {
+                using var fs = File.Create(swyfPrefsPath);
+                stream.CopyTo(fs);
+            }
+            else
+            {
+                var resNames = typeof(Program).Assembly.GetManifestResourceNames();
+                var match = resNames.FirstOrDefault(n => n.EndsWith("SWYF.Prefs.dll", StringComparison.OrdinalIgnoreCase));
+                if (match != null)
+                {
+                    using var s = typeof(Program).Assembly.GetManifestResourceStream(match);
+                    using var fs = File.Create(swyfPrefsPath);
+                    s.CopyTo(fs);
+                }
+            }
+        }
 
         var resolver = new DefaultAssemblyResolver();
         resolver.AddSearchDirectory(managedDir);
@@ -182,36 +219,77 @@ internal class Program
         var ppType = asm.MainModule.Types.FirstOrDefault(t => t.FullName == "UnityEngine.PlayerPrefs");
         if (ppType == null) return;
 
+        var prefsAsm = resolver.Resolve(new AssemblyNameReference("SWYF.Prefs", new Version(1, 0, 0, 0)));
+        var swyfPrefsType = prefsAsm.MainModule.Types.FirstOrDefault(t => t.FullName == "UnityEngine.SwyfPlayerPrefs");
+        if (swyfPrefsType == null) return;
+
         var voidType = asm.MainModule.TypeSystem.Void;
         var stringType = asm.MainModule.TypeSystem.String;
         var intType = asm.MainModule.TypeSystem.Int32;
         var floatType = asm.MainModule.TypeSystem.Single;
+        var boolType = asm.MainModule.TypeSystem.Boolean;
 
         bool modified = false;
 
-        void AddStub(string name, ParameterDefinition[] parameters)
+        void RedirectMethod(string name, TypeReference returnType, params TypeReference[] paramTypes)
         {
-            if (ppType.Methods.Any(m => m.Name == name && m.Parameters.Count == parameters.Length)) return;
-            var method = new MethodDefinition(name, MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig, voidType);
-            foreach (var p in parameters) method.Parameters.Add(p);
+            var targetMethod = swyfPrefsType.Methods.FirstOrDefault(m => m.Name == name && m.Parameters.Count == paramTypes.Length);
+            if (targetMethod == null) return;
+
+            var targetMethodRef = asm.MainModule.ImportReference(targetMethod);
+
+            var existing = ppType.Methods.FirstOrDefault(m => m.Name == name && m.Parameters.Count == paramTypes.Length);
+            MethodDefinition method;
+            if (existing != null)
+            {
+                method = existing;
+                method.Body.Instructions.Clear();
+                method.Body.Variables.Clear();
+                method.Body.ExceptionHandlers.Clear();
+            }
+            else
+            {
+                method = new MethodDefinition(name, MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig, returnType);
+                for (int i = 0; i < paramTypes.Length; i++)
+                {
+                    method.Parameters.Add(new ParameterDefinition("arg" + i, ParameterAttributes.None, paramTypes[i]));
+                }
+                ppType.Methods.Add(method);
+            }
+
             var il = method.Body.GetILProcessor();
+            for (int i = 0; i < paramTypes.Length; i++)
+            {
+                if (i == 0) il.Emit(OpCodes.Ldarg_0);
+                else if (i == 1) il.Emit(OpCodes.Ldarg_1);
+                else if (i == 2) il.Emit(OpCodes.Ldarg_2);
+                else il.Emit(OpCodes.Ldarg, i);
+            }
+            il.Emit(OpCodes.Call, targetMethodRef);
             il.Emit(OpCodes.Ret);
-            ppType.Methods.Add(method);
             modified = true;
         }
 
-        AddStub("SetInt", new[] { new ParameterDefinition("key", ParameterAttributes.None, stringType), new ParameterDefinition("value", ParameterAttributes.None, intType) });
-        AddStub("SetFloat", new[] { new ParameterDefinition("key", ParameterAttributes.None, stringType), new ParameterDefinition("value", ParameterAttributes.None, floatType) });
-        AddStub("DeleteKey", new[] { new ParameterDefinition("key", ParameterAttributes.None, stringType) });
-        AddStub("Save", Array.Empty<ParameterDefinition>());
-        AddStub("DeleteAll", Array.Empty<ParameterDefinition>());
+        RedirectMethod("SetInt", voidType, stringType, intType);
+        RedirectMethod("GetInt", intType, stringType, intType);
+        RedirectMethod("GetInt", intType, stringType);
+        RedirectMethod("SetFloat", voidType, stringType, floatType);
+        RedirectMethod("GetFloat", floatType, stringType, floatType);
+        RedirectMethod("GetFloat", floatType, stringType);
+        RedirectMethod("SetString", voidType, stringType, stringType);
+        RedirectMethod("GetString", stringType, stringType, stringType);
+        RedirectMethod("GetString", stringType, stringType);
+        RedirectMethod("HasKey", boolType, stringType);
+        RedirectMethod("DeleteKey", voidType, stringType);
+        RedirectMethod("DeleteAll", voidType);
+        RedirectMethod("Save", voidType);
 
         if (modified)
         {
             asm.Write(path + ".tmp");
             File.Move(path + ".tmp", path, true);
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("[*] Patched UnityEngine.CoreModule.dll (restored PlayerPrefs methods)");
+            Console.WriteLine("[*] Patched UnityEngine.CoreModule.dll (restored full functional PlayerPrefs engine)");
             Console.ResetColor();
         }
         else
