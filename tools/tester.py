@@ -1,10 +1,12 @@
 import os
 import glob
 import json
-import platform
 import urllib.request
 import urllib.error
-from typing import Optional, Dict, Any
+from typing import Optional
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SWYF-Gateway/2.0"
+GROQ_FALLBACK_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 
 def find_local_json() -> Optional[str]:
     candidates = []
@@ -65,44 +67,56 @@ def test_provider_key(provider: str, api_key: str, model: str) -> bool:
         "openrouter": "https://openrouter.ai/api/v1/chat/completions"
     }
     
-    endpoint = endpoints.get(provider.lower())
+    prov = provider.lower()
+    endpoint = endpoints.get(prov)
     if not endpoint:
         print(f"[!] Unknown provider: {provider}")
         return False
-        
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "user", "content": "Hello! Reply with 'OK'"}
-        ],
-        "max_tokens": 50
-    }).encode("utf-8")
-    
+
+    models_to_try = [model]
+    if prov == "groq":
+        for m in GROQ_FALLBACK_MODELS:
+            if m not in models_to_try:
+                models_to_try.append(m)
+
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key.strip()}"
+        "Authorization": f"Bearer {api_key.strip()}",
+        "User-Agent": USER_AGENT
     }
-    if provider.lower() == "openrouter":
+    if prov == "openrouter":
         headers["HTTP-Referer"] = "https://github.com/altuux/swyf-patcher"
         headers["X-Title"] = "SWYF Toolkit"
-        
-    req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=12) as res:
-            res_data = json.loads(res.read().decode("utf-8"))
-            choice = res_data.get("choices", [{}])[0]
-            msg = choice.get("message", {})
-            reply = msg.get("content") or msg.get("reasoning") or "OK"
-            print(f"[+] Provider response: \"{reply.strip()[:60]}\"")
-            print(f"[+] {provider.upper()} API Key is VALID and ACTIVE!")
-            return True
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode("utf-8", errors="ignore")
-        print(f"[-] {provider.upper()} rejected request (HTTP {e.code}): {err_msg[:200]}")
-        return False
-    except Exception as e:
-        print(f"[-] Connection failed: {e}")
-        return False
+
+    for candidate_model in models_to_try:
+        payload = json.dumps({
+            "model": candidate_model,
+            "messages": [
+                {"role": "user", "content": "Hello! Reply with 'OK'"}
+            ],
+            "max_tokens": 60
+        }).encode("utf-8")
+
+        req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=12) as res:
+                res_data = json.loads(res.read().decode("utf-8"))
+                choice = res_data.get("choices", [{}])[0]
+                msg = choice.get("message", {})
+                reply = msg.get("content") or msg.get("reasoning") or "OK"
+                print(f"[+] Provider response ({candidate_model}): \"{reply.strip()[:60]}\"")
+                print(f"[+] {provider.upper()} API Key is VALID and ACTIVE!")
+                return True
+        except urllib.error.HTTPError as e:
+            err_msg = e.read().decode("utf-8", errors="ignore")
+            if prov == "groq" and e.code == 404 and "model_not_found" in err_msg and candidate_model != models_to_try[-1]:
+                continue
+            print(f"[-] {provider.upper()} rejected request (HTTP {e.code}): {err_msg[:200]}")
+            return False
+        except Exception as e:
+            print(f"[-] Connection failed: {e}")
+            return False
+    return False
 
 def inspect_game_save():
     config_path = find_local_json()

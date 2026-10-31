@@ -3,7 +3,7 @@ import os
 import sys
 import time
 import subprocess
-from config import load_config, save_config
+from config import load_config, save_config, get_app_dir
 from proxy import run_proxy, PROVIDER_PRIORITY, DEFAULT_MODELS
 from tester import test_provider_key, inspect_game_save
 
@@ -153,12 +153,21 @@ def main_menu():
             run_tests()
         elif opt == "4":
             print("\nLaunching KolkataPatcher...")
-            patcher_exe = os.path.join(os.path.dirname(__file__), "..", "release", "KolkataPatcher.exe")
-            patcher_linux = os.path.join(os.path.dirname(__file__), "..", "release", "KolkataPatcher-linux")
-            
-            if os.name == "nt" and os.path.exists(patcher_exe):
+            app_dir = get_app_dir()
+            win_candidates = [
+                os.path.join(app_dir, "KolkataPatcher.exe"),
+                os.path.join(app_dir, "..", "release", "KolkataPatcher.exe"),
+            ]
+            linux_candidates = [
+                os.path.join(app_dir, "KolkataPatcher-linux"),
+                os.path.join(app_dir, "..", "release", "KolkataPatcher-linux"),
+            ]
+            patcher_exe = next((p for p in win_candidates if os.path.exists(p)), None)
+            patcher_linux = next((p for p in linux_candidates if os.path.exists(p)), None)
+
+            if os.name == "nt" and patcher_exe:
                 subprocess.run([patcher_exe])
-            elif os.path.exists(patcher_linux):
+            elif patcher_linux:
                 subprocess.run(["chmod", "+x", patcher_linux])
                 subprocess.run([patcher_linux])
             else:

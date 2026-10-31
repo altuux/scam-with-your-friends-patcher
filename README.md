@@ -89,7 +89,7 @@ The gateway acts as an OpenAI-compatible reverse proxy running on `127.0.0.1:888
 
 - **Automatic Cascade & Fallback:**
   Requests flow sequentially:
-  $$\text{Groq (Llama 3.3 70B)} \longrightarrow \text{DeepSeek (Chat)} \longrightarrow \text{OpenRouter (DeepSeek V4 Flash)}$$
+  $$\text{Groq (Qwen 3.8 27B)} \longrightarrow \text{DeepSeek (Chat)} \longrightarrow \text{OpenRouter (DeepSeek V4 Flash)}$$
   If a provider experiences rate limiting, downtime, or key exhaustion, the request immediately falls back to the next provider in the chain.
 
 - **Round-Robin Key Pool:**

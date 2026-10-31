@@ -1,12 +1,13 @@
 import os
+import sys
 import json
-from typing import List, Dict, Any
+from typing import Dict, Any
 
 CONFIG_FILE = "swyf_config.json"
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "provider": "groq",
-    "model": "llama-3.3-70b-versatile",
+    "model": "qwen/qwen3.8-27b",
     "port": 8888,
     "keys": {
         "groq": [],
@@ -18,10 +19,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "auto_retry_count": 3
 }
 
+def get_app_dir() -> str:
+    # In Nuitka --onefile or frozen builds, __file__ points to a temporary extraction directory.
+    # Use sys.argv[0] so swyf_config.json is persisted next to the actual executable.
+    if "__compiled__" in globals() or getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.dirname(os.path.abspath(__file__))
+
 def get_config_path() -> str:
-    # Look next to the script / executable
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_dir, CONFIG_FILE)
+    return os.path.join(get_app_dir(), CONFIG_FILE)
 
 def load_config() -> Dict[str, Any]:
     path = get_config_path()
@@ -31,7 +37,6 @@ def load_config() -> Dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Merge with defaults for any missing keys
             merged = DEFAULT_CONFIG.copy()
             merged.update(data)
             return merged
