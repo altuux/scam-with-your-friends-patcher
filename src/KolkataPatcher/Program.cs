@@ -361,34 +361,87 @@ internal class Program
         using var asm = AssemblyDefinition.ReadAssembly(ms, readerParams);
 
         var hostAi = asm.MainModule.Types.FirstOrDefault(t => t.Name == "HostAiSettings");
+        var modelType = asm.MainModule.Types.FirstOrDefault(t => t.Name == "OpenRouterModel");
         if (hostAi == null) return;
 
         bool modified = false;
 
-        var openRouterProp = hostAi.Properties.FirstOrDefault(p => p.Name == "OpenRouterSelected");
-        if (openRouterProp?.GetMethod != null)
+        void ForceBoolGetter(string propName, bool value)
         {
-            var m = openRouterProp.GetMethod;
+            var prop = hostAi.Properties.FirstOrDefault(p => p.Name == propName);
+            if (prop?.GetMethod == null) return;
+            var m = prop.GetMethod;
             m.Body.Instructions.Clear();
             m.Body.Variables.Clear();
             m.Body.ExceptionHandlers.Clear();
             var il = m.Body.GetILProcessor();
-            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Ret);
             modified = true;
         }
 
-        var directProp = hostAi.Properties.FirstOrDefault(p => p.Name == "UseDirectOpenRouter");
-        if (directProp?.GetMethod != null)
+        ForceBoolGetter("OpenRouterSelected", true);
+        ForceBoolGetter("UseDirectOpenRouter", true);
+        ForceBoolGetter("HasSavedKey", true);
+        ForceBoolGetter("HasInvalidKey", false);
+
+        var apiKeyProp = hostAi.Properties.FirstOrDefault(p => p.Name == "ApiKey");
+        if (apiKeyProp?.GetMethod != null)
         {
-            var m = directProp.GetMethod;
+            var m = apiKeyProp.GetMethod;
             m.Body.Instructions.Clear();
             m.Body.Variables.Clear();
             m.Body.ExceptionHandlers.Clear();
             var il = m.Body.GetILProcessor();
-            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldstr, "swyf-local-gateway");
             il.Emit(OpCodes.Ret);
             modified = true;
+        }
+
+        // Provide a valid non-null OpenRouterModel from SelectedModel so fresh installs never hit NullReferenceException in PrepareDirectOpenRouterBody
+        var selectedModelProp = hostAi.Properties.FirstOrDefault(p => p.Name == "SelectedModel");
+        if (selectedModelProp?.GetMethod != null && modelType != null)
+        {
+            var modelCtor = modelType.Methods.FirstOrDefault(m => m.IsConstructor && !m.IsStatic && m.Parameters.Count == 0);
+            var setId = modelType.Methods.FirstOrDefault(m => m.Name == "set_Id" && m.Parameters.Count == 1);
+            var setName = modelType.Methods.FirstOrDefault(m => m.Name == "set_Name" && m.Parameters.Count == 1);
+            var setParams = modelType.Methods.FirstOrDefault(m => m.Name == "set_SupportedParameters" && m.Parameters.Count == 1);
+
+            if (modelCtor != null && setId != null && setName != null && setParams != null)
+            {
+                var m = selectedModelProp.GetMethod;
+                m.Body.Instructions.Clear();
+                m.Body.Variables.Clear();
+                m.Body.ExceptionHandlers.Clear();
+                m.Body.InitLocals = true;
+
+                var il = m.Body.GetILProcessor();
+                il.Emit(OpCodes.Newobj, modelCtor);
+
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldstr, "swyf/gateway");
+                il.Emit(OpCodes.Callvirt, setId);
+
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldstr, "SWYF Local AI Gateway");
+                il.Emit(OpCodes.Callvirt, setName);
+
+                string[] supported = { "max_tokens", "temperature", "top_p", "response_format", "structured_outputs" };
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4, supported.Length);
+                il.Emit(OpCodes.Newarr, asm.MainModule.TypeSystem.String);
+                for (int idx = 0; idx < supported.Length; idx++)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldc_I4, idx);
+                    il.Emit(OpCodes.Ldstr, supported[idx]);
+                    il.Emit(OpCodes.Stelem_Ref);
+                }
+                il.Emit(OpCodes.Callvirt, setParams);
+
+                il.Emit(OpCodes.Ret);
+                modified = true;
+            }
         }
 
         if (modified)
@@ -660,6 +713,8 @@ internal class Program
             if (moveNextMethod != null)
             {
                 var instrs = moveNextMethod.Body.Instructions;
+                bool redirectedEndpoint = false;
+                bool alreadyRedirected = false;
                 for (int i = 0; i < instrs.Count; i++)
                 {
                     // Redirect endpoint string to local proxy
@@ -668,9 +723,14 @@ internal class Program
                          (string)instrs[i].Operand == "https://inference.celeris.ai/celeris-1/v1/chat/completions"))
                     {
                         instrs[i].Operand = "http://127.0.0.1:8888/v1/chat/completions";
+                        redirectedEndpoint = true;
                         Console.ForegroundColor = ConsoleColor.Cyan;
                         Console.WriteLine("[*] Patched CompleteOpenRouterAsync endpoint -> http://127.0.0.1:8888/v1/chat/completions");
                         Console.ResetColor();
+                    }
+                    else if (instrs[i].OpCode == OpCodes.Ldstr && (string)instrs[i].Operand == "http://127.0.0.1:8888/v1/chat/completions")
+                    {
+                        alreadyRedirected = true;
                     }
 
                     // NOP out the brfalse check on UseDirectOpenRouter so it NEVER branches to CompleteEdgeForCallerAsync
@@ -725,6 +785,16 @@ internal class Program
                             }
                         }
                     }
+                }
+                if (!redirectedEndpoint && alreadyRedirected)
+                {
+                    Console.WriteLine("[ ] CompleteOpenRouterAsync already redirected to http://127.0.0.1:8888/v1/chat/completions");
+                }
+                else if (!redirectedEndpoint && !alreadyRedirected)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("[!] Warning: CompleteOpenRouterAsync endpoint literal was not found in this game build!");
+                    Console.ResetColor();
                 }
             }
         }
