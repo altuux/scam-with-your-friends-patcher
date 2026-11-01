@@ -155,10 +155,15 @@ def forward_request(payload: Dict[str, Any], provider: str, api_key: str, model_
             return _send_single(endpoint, attempt_body, headers)
         except urllib.error.HTTPError as e:
             err_msg = e.read().decode("utf-8", errors="ignore")
-            # Automatic fallback if Groq deprecates a model ID
-            if provider == "groq" and e.code == 404 and "model_not_found" in err_msg and candidate_model != models_to_try[-1]:
-                print(f"[*] Groq model '{candidate_model}' unavailable, falling back to next active Groq model...")
-                continue
+            # Automatic fallback if Groq deprecates a model ID or hits 429 rate limit on this specific model
+            if provider == "groq" and candidate_model != models_to_try[-1]:
+                if e.code == 404 and "model_not_found" in err_msg:
+                    print(f"[*] Groq model '{candidate_model}' unavailable, falling back to next active Groq model...")
+                    continue
+                if e.code == 429:
+                    next_model = models_to_try[models_to_try.index(candidate_model) + 1]
+                    print(f"[*] Groq model '{candidate_model}' hit 429 rate limit. Switching to independent model quota '{next_model}' on same key...")
+                    continue
             # Automatic fallback if strict json_schema grammar is unsupported by the target model
             if e.code == 400 and isinstance(attempt_body.get("response_format"), dict) and attempt_body["response_format"].get("type") == "json_schema":
                 _downgrade_json_schema_to_json_object(attempt_body)
